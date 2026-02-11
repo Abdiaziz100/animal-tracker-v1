@@ -43,31 +43,34 @@ class ApiService {
 
   async login(data: LoginRequest): Promise<LoginResponse> {
     try {
-      const response = await this.client.post<LoginResponse>('/api/login', data);
+      console.log('Login attempt:', { email: data.email, url: `${API_CONFIG.BASE_URL}/api/login` });
+      const response = await this.client.post('/api/login', data);
+      console.log('Login response:', response.data);
       if (response.data.success && response.data.user) {
-        this.setToken('mock-jwt-token'); // Backend doesn't use JWT yet
+        return { success: true, user: response.data.user };
       }
-      return response.data;
+      return { success: false, message: response.data.message || 'Login failed' };
     } catch (error: any) {
+      console.error('Login error:', error.response?.data || error.message);
       if (error.response?.data) {
-        return error.response.data;
+        return { success: false, message: error.response.data.message || 'Login failed' };
       }
-      throw error;
+      return { success: false, message: 'Network error' };
     }
   }
 
   async register(data: RegisterRequest): Promise<RegisterResponse> {
     try {
-      const response = await this.client.post<RegisterResponse>('/api/register', data);
+      const response = await this.client.post('/api/register', data);
       if (response.data.success && response.data.user) {
-        this.setToken('mock-jwt-token');
+        return { success: true, user: response.data.user };
       }
-      return response.data;
+      return { success: false, message: response.data.message || 'Registration failed' };
     } catch (error: any) {
       if (error.response?.data) {
-        return error.response.data;
+        return { success: false, message: error.response.data.message || 'Registration failed' };
       }
-      throw error;
+      return { success: false, message: 'Network error' };
     }
   }
 

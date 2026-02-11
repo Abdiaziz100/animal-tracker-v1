@@ -1,7 +1,7 @@
 // API Configuration
 const API_CONFIG = {
   // Production: Replace with your deployed backend URL
-  BASE_URL: process.env.EXPO_PUBLIC_API_URL || 'http://192.168.100.35:5000',
+  BASE_URL: process.env.EXPO_PUBLIC_API_URL || 'http://10.21.201.96:5000',
   
   // For local development:
   // Android emulator: 'http://10.0.2.2:5000'
@@ -12,4 +12,3 @@ const API_CONFIG = {
 };
 
 export default API_CONFIG;
-

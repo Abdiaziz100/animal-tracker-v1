@@ -45,18 +45,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
+      console.log('AuthContext: Attempting login for', email);
       const response = await apiService.login({ email, password });
+      console.log('AuthContext: Login response', response);
 
       if (response.success && response.user) {
         setUser(response.user);
         await AsyncStorage.setItem(USER_STORAGE_KEY, JSON.stringify(response.user));
-        await AsyncStorage.setItem(TOKEN_STORAGE_KEY, 'mock-jwt-token');
+        await AsyncStorage.setItem(TOKEN_STORAGE_KEY, 'mock-token');
+        apiService.setToken('mock-token');
+        console.log('AuthContext: Login successful');
         return true;
       }
 
+      console.log('AuthContext: Login failed - no user in response');
       return false;
     } catch (error) {
-      console.error('Login error:', error);
+      console.error('AuthContext: Login error:', error);
       return false;
     }
   };
@@ -68,7 +73,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (response.success && response.user) {
         setUser(response.user);
         await AsyncStorage.setItem(USER_STORAGE_KEY, JSON.stringify(response.user));
-        await AsyncStorage.setItem(TOKEN_STORAGE_KEY, 'mock-jwt-token');
+        const token = (response as any).access_token || 'mock-token';
+        await AsyncStorage.setItem(TOKEN_STORAGE_KEY, token);
+        apiService.setToken(token);
         return true;
       }
 
