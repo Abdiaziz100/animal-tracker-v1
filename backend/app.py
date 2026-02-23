@@ -8,10 +8,19 @@ app = Flask(__name__)
 CORS(app)
 
 # Database configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///tracker.db'
+# Use DATABASE_URL from environment (Render) or fallback to absolute path
+database_url = os.environ.get('DATABASE_URL')
+if database_url:
+    # Use the provided database URL (production)
+    app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+else:
+    # Use absolute path for local SQLite database
+    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance', 'tracker.db')
+    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Initialize SQLAlchemy BEFORE using it
+# Initialize SQLAlchemy AFTER configuring the URI
 from flask_sqlalchemy import SQLAlchemy
 db = SQLAlchemy(app)
 
