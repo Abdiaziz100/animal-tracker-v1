@@ -1,14 +1,11 @@
 // API Configuration
 const API_CONFIG = {
-  // Production: Replace with your deployed backend URL
-  BASE_URL: process.env.EXPO_PUBLIC_API_URL || 'http://10.34.231.96:5000',
-  
-  // For local development:
+  // Use your computer's IP address for physical device on same WiFi
   // Android emulator: 'http://10.0.2.2:5000'
   // iOS simulator: 'http://localhost:5000'
-  // Physical device: 'http://YOUR_IP:5000'
-  
-  TIMEOUT: 30000,
+  // Production: Replace with Railway URL
+  BASE_URL: process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:5000',
+  TIMEOUT: 10000, // 10 seconds
 };
 
 export default API_CONFIG;
