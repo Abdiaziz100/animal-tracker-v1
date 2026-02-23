@@ -8,9 +8,9 @@ animals_bp = Blueprint('animals', __name__)
 @jwt_required()
 def get_animals():
     current_user_id = get_jwt_identity()
-    user_id = request.args.get('user_id', current_user_id)
     
-    animals = Animal.query.filter_by(user_id=user_id).all()
+    # Only fetch animals belonging to the current user (from JWT)
+    animals = Animal.query.filter_by(user_id=current_user_id).all()
     
     return jsonify({
         'animals': [{

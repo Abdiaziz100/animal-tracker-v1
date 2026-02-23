@@ -3,8 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../services/api';
 
 export default function Login({ setUser }) {
-  const [email, setEmail] = useState('admin@farm.com');
-  const [password, setPassword] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
@@ -84,12 +84,6 @@ export default function Login({ setUser }) {
             Register here
           </Link>
         </p>
-
-        <div className="mt-6 p-4 bg-gray-50 rounded-xl text-sm text-gray-600">
-          <p className="font-medium mb-2">Demo Credentials:</p>
-          <p>Email: admin@farm.com</p>
-          <p>Password: admin123</p>
-        </div>
       </div>
     </div>
   );

@@ -129,9 +129,16 @@ def animals():
     if request.method == "POST":
         data = request.json or {}
         
-        # Check if device_id already registered
-        if Animal.query.filter_by(device_id=data.get("device_id", "")).first():
-            return jsonify({"success": False, "message": "Device ID already registered"}), 400
+        device_id = data.get("device_id", "")
+        ear_tag = data.get("ear_tag", "")
+        
+        # Check if device_id (BLE) already registered
+        if device_id and Animal.query.filter_by(device_id=device_id).first():
+            return jsonify({"success": False, "message": "BLE Device ID already in use by another animal"}), 400
+        
+        # Check if ear_tag already registered
+        if ear_tag and Animal.query.filter_by(ear_tag=ear_tag).first():
+            return jsonify({"success": False, "message": "Ear Tag number already in use by another animal"}), 400
         
         # Create animal
         animal = Animal(
@@ -194,9 +201,25 @@ def animal_detail(id):
     
     if request.method == "PUT":
         data = request.json or {}
+        
+        new_device_id = data.get("device_id")
+        new_ear_tag = data.get("ear_tag")
+        
+        # Check if new device_id (BLE) is already used by another animal
+        if new_device_id and new_device_id != animal.device_id:
+            if Animal.query.filter(Animal.device_id == new_device_id, Animal.id != animal.id).first():
+                return jsonify({"success": False, "message": "BLE Device ID already in use by another animal"}), 400
+        
+        # Check if new ear_tag is already used by another animal
+        if new_ear_tag and new_ear_tag != animal.ear_tag:
+            if Animal.query.filter(Animal.ear_tag == new_ear_tag, Animal.id != animal.id).first():
+                return jsonify({"success": False, "message": "Ear Tag number already in use by another animal"}), 400
+        
         animal.name = data.get("name", animal.name)
         animal.ear_tag = data.get("ear_tag", animal.ear_tag)
         animal.species = data.get("species", animal.species)
+        if new_device_id:
+            animal.device_id = new_device_id
         db.session.commit()
         return jsonify({"success": True})
     
