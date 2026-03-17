@@ -1,8 +1,8 @@
-// API Configuration
+// API Configuration - NETWORK ERROR FIXED FOR DEV
 const API_CONFIG = {
-  // Production: Replace with Railway URL
-  BASE_URL: 'https://animal-tracker-v1.onrender.com',
-  TIMEOUT: 10000, // 10 seconds
+  BASE_URL: 'http://192.168.0.115:5000',
+  TIMEOUT: 10000,
 };
 
 export default API_CONFIG;
+

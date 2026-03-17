@@ -17,7 +17,8 @@ class ApiService {
   private client: AxiosInstance;
   private token: string | null = null;
 
-  constructor() {
+constructor() {
+    console.log('API BASE_URL:', API_CONFIG.BASE_URL);
     this.client = axios.create({
       baseURL: API_CONFIG.BASE_URL,
       timeout: API_CONFIG.TIMEOUT,

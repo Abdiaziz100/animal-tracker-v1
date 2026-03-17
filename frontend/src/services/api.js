@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = 'https://animal-tracker-v1.onrender.com/api';
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:5000/api' : 'https://animal-tracker-v1.onrender.com/api');
 
 // Create axios instance
 const api = axios.create({

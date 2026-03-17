@@ -1,0 +1,23 @@
+# User-Based Animal Ownership Implementation Plan
+
+## Changes Needed:
+
+### 1. Backend (app.py)
+- Modify animal creation to accept and store user_id
+- Add user_id filter to GET /api/animals
+- Add admin check endpoint
+
+### 2. Mobile App
+- Update login to store user info (id, email, name, is_admin)
+- Update animal creation to include user_id
+- Add logout functionality
+
+### 3. Frontend (optional)
+- Similar changes if needed
+
+## Implementation Steps:
+
+1. Read current backend app.py to understand structure
+2. Update backend to associate animals with users
+3. Update mobile app API service and screens
+4. Test and deploy

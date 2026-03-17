@@ -1,11 +1,111 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from datetime import datetime
+from functools import wraps
 import math
 import os
+import re
+import logging
+from datetime import datetime
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app)
+
+# CORS configuration
+CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+# Rate Limiting configuration
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://"
+)
+
+# Simple in-memory cache
+cache = {}
+
+def cache_response(key, data, ttl=60):
+    """Store response in cache with TTL in seconds"""
+    import time
+    cache[key] = {
+        'data': data,
+        'expires': time.time() + ttl
+    }
+
+def get_cached(key):
+    """Get cached response if not expired"""
+    import time
+    if key in cache:
+        if cache[key]['expires'] > time.time():
+            return cache[key]['data']
+        else:
+            del cache[key]
+    return None
+
+def clear_cache():
+    """Clear all cached responses"""
+    cache.clear()
+
+# Background Scheduler for periodic tasks
+from apscheduler.schedulers.background import BackgroundScheduler
+scheduler = BackgroundScheduler()
+scheduler.start()
+
+# ============ VALIDATION HELPERS ============
+
+def validate_email(email):
+    """Validate email format"""
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, str(email)) is not None
+
+def validate_required_fields(data, fields):
+    """Validate required fields exist"""
+    missing = [f for f in fields if not data.get(f)]
+    if missing:
+        return False, f"Missing required fields: {', '.join(missing)}"
+    return True, None
+
+def sanitize_input(value, max_length=255):
+    """Sanitize string input"""
+    if value:
+        value = str(value).strip()[:max_length]
+        value = re.sub(r'[<>"\']', '', value)
+    return value
+
+def validate_lat_lng(lat, lng):
+    """Validate latitude and longitude"""
+    try:
+        lat = float(lat)
+        lng = float(lng)
+        if -90 <= lat <= 90 and -180 <= lng <= 180:
+            return True, None
+        return False, "Invalid coordinates"
+    except (ValueError, TypeError):
+        return False, "Invalid coordinate format"
+
+# ============ ERROR HANDLERS ============
+
+@app.errorhandler(400)
+def bad_request(error):
+    return jsonify({"success": False, "message": "Bad request"}), 400
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({"success": False, "message": "Resource not found"}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({"success": False, "message": "Internal server error"}), 500
 
 # Database configuration
 # Use DATABASE_URL from environment (Render) or fallback to absolute path
@@ -35,31 +135,31 @@ class User(db.Model):
 class Animal(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
-    device_id = db.Column(db.String(100), unique=True, nullable=False)
-    ear_tag = db.Column(db.String(50), unique=True)
+    device_id = db.Column(db.String(100), unique=True, nullable=False, index=True)  # Indexed
+    ear_tag = db.Column(db.String(50), unique=True, index=True)  # Indexed
     species = db.Column(db.String(50))
     lat = db.Column(db.Float, default=0)
     lng = db.Column(db.Float, default=0)
-    status = db.Column(db.String(10), default="IN")
+    status = db.Column(db.String(10), default="IN", index=True)  # Indexed
     battery_level = db.Column(db.Float, default=100)
     signal_strength = db.Column(db.Float, default=100)
-    last_seen = db.Column(db.DateTime)
+    last_seen = db.Column(db.DateTime, index=True)  # Indexed
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
 
 class Geofence(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), index=True)  # Indexed
     center_lat = db.Column(db.Float, default=-1.2921)
     center_lng = db.Column(db.Float, default=36.8219)
     radius_km = db.Column(db.Float, default=0.5)
 
 class Alert(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    animal_id = db.Column(db.Integer, db.ForeignKey('animal.id'))
-    alert_type = db.Column(db.String(20))
+    animal_id = db.Column(db.Integer, db.ForeignKey('animal.id'), index=True)  # Indexed
+    alert_type = db.Column(db.String(20), index=True)  # Indexed
     message = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    is_read = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)  # Indexed
+    is_read = db.Column(db.Boolean, default=False, index=True)  # Indexed
     animal = db.relationship('Animal', backref='alerts')
 
 # Create tables and default data
@@ -102,30 +202,71 @@ def check_geofence(lat, lng):
 # ============ AUTH ROUTES ============
 
 @app.route("/api/login", methods=["POST"])
+@limiter.limit("5 per minute")  # Rate limit login attempts
 def login():
-    data = request.json or {}
-    user = User.query.filter_by(email=data.get("email", "")).first()
+    # Validate request has JSON data
+    if not request.json:
+        return jsonify({"success": False, "message": "Request body required"}), 400
     
-    if user and user.password == data.get("password", ""):
+    data = request.json
+    
+    # Validate required fields
+    valid, error = validate_required_fields(data, ['email', 'password'])
+    if not valid:
+        return jsonify({"success": False, "message": error}), 400
+    
+    # Sanitize inputs
+    email = sanitize_input(data.get('email', ''), 120)
+    password = data.get('password', '')
+    
+    # Validate email format
+    if not validate_email(email):
+        return jsonify({"success": False, "message": "Invalid email format"}), 400
+    
+    user = User.query.filter_by(email=email).first()
+    
+    if user and user.password == password:
+        logger.info(f"Successful login for user: {email}")
         return jsonify({
             "success": True,
             "user": {"id": user.id, "email": user.email, "name": user.name}
         })
     
+    logger.warning(f"Failed login attempt for email: {email}")
     return jsonify({"success": False, "message": "Invalid credentials"}), 401
 
 @app.route("/api/register", methods=["POST"])
+@limiter.limit("3 per minute")  # Rate limit registration
 def register():
-    data = request.json or {}
+    # Validate request has JSON data
+    if not request.json:
+        return jsonify({"success": False, "message": "Request body required"}), 400
     
-    if User.query.filter_by(email=data.get("email", "")).first():
+    data = request.json
+    
+    # Validate required fields
+    valid, error = validate_required_fields(data, ['email', 'password', 'name'])
+    if not valid:
+        return jsonify({"success": False, "message": error}), 400
+    
+    # Sanitize inputs
+    email = sanitize_input(data.get('email', ''), 120)
+    password = data.get('password', '')
+    name = sanitize_input(data.get('name', ''), 100)
+    
+    # Validate email format
+    if not validate_email(email):
+        return jsonify({"success": False, "message": "Invalid email format"}), 400
+    
+    # Validate password length
+    if len(password) < 6:
+        return jsonify({"success": False, "message": "Password must be at least 6 characters"}), 400
+    
+    # Check if email already exists
+    if User.query.filter_by(email=email).first():
         return jsonify({"success": False, "message": "Email already exists"}), 400
     
-    user = User(
-        email=data.get("email", ""),
-        password=data.get("password", ""),
-        name=data.get("name", "")
-    )
+    user = User(email=email, password=password, name=name)
     db.session.add(user)
     db.session.commit()
     
@@ -162,6 +303,9 @@ def animals():
         db.session.add(animal)
         db.session.commit()
         
+        # Clear cache when data changes
+        clear_cache()
+        
         return jsonify({
             "success": True,
             "animal": {
@@ -174,9 +318,14 @@ def animals():
             }
         })
     
-    # GET request - return all animals
+    # GET request - return all animals (with caching)
+    cache_key = "animals_list"
+    cached_data = get_cached(cache_key)
+    if cached_data:
+        return jsonify(cached_data)
+    
     animals_list = Animal.query.all()
-    return jsonify([{
+    result = [{
         "id": a.id,
         "name": a.name,
         "device_id": a.device_id,
@@ -188,14 +337,25 @@ def animals():
         "battery_level": a.battery_level,
         "signal_strength": a.signal_strength,
         "last_seen": a.last_seen.isoformat() if a.last_seen else None
-    } for a in animals_list])
+    } for a in animals_list]
+    
+    # Cache for 30 seconds
+    cache_response(cache_key, result, ttl=30)
+    
+    return jsonify(result)
 
 @app.route("/api/animals/<int:id>", methods=["GET", "PUT", "DELETE"])
 def animal_detail(id):
     animal = Animal.query.get_or_404(id)
     
     if request.method == "GET":
-        return jsonify({
+        # Check cache
+        cache_key = f"animal_{id}"
+        cached_data = get_cached(cache_key)
+        if cached_data:
+            return jsonify(cached_data)
+        
+        result = {
             "id": animal.id,
             "name": animal.name,
             "device_id": animal.device_id,
@@ -206,7 +366,9 @@ def animal_detail(id):
             "status": animal.status,
             "battery_level": animal.battery_level,
             "signal_strength": animal.signal_strength
-        })
+        }
+        cache_response(cache_key, result, ttl=30)
+        return jsonify(result)
     
     if request.method == "PUT":
         data = request.json or {}
@@ -230,22 +392,48 @@ def animal_detail(id):
         if new_device_id:
             animal.device_id = new_device_id
         db.session.commit()
+        
+        # Clear cache
+        clear_cache()
+        
         return jsonify({"success": True})
     
     if request.method == "DELETE":
         db.session.delete(animal)
         db.session.commit()
+        
+        # Clear cache
+        clear_cache()
+        
         return jsonify({"success": True})
 
 # ============ GPS / TRACKING ROUTES ============
 
 @app.route("/api/gps", methods=["POST"])
+@limiter.limit("30 per minute")  # Rate limit GPS updates
 def gps_update():
-    data = request.json or {}
-    device_id = data.get("device_id")
+    # Validate request has JSON data
+    if not request.json:
+        return jsonify({"success": False, "message": "Request body required"}), 400
     
-    if not device_id:
-        return jsonify({"success": False, "message": "Device ID required"}), 400
+    data = request.json
+    
+    # Validate required fields
+    valid, error = validate_required_fields(data, ['device_id'])
+    if not valid:
+        return jsonify({"success": False, "message": error}), 400
+    
+    device_id = sanitize_input(data.get('device_id', ''), 100)
+    
+    # Validate device_id format (alphanumeric and hyphens only)
+    if not re.match(r'^[a-zA-Z0-9\-_]+$', device_id):
+        return jsonify({"success": False, "message": "Invalid device ID format"}), 400
+    
+    # Validate coordinates if provided
+    if 'lat' in data or 'lng' in data:
+        valid, error = validate_lat_lng(data.get('lat', 0), data.get('lng', 0))
+        if not valid:
+            return jsonify({"success": False, "message": error}), 400
     
     animal = Animal.query.filter_by(device_id=device_id).first()
     
@@ -264,6 +452,7 @@ def gps_update():
     animal.status = new_status
     
     if old_status == "IN" and new_status == "OUT":
+        logger.warning(f"ALERT: {animal.name} (ID: {animal.id}) has left the farm boundary!")
         alert = Alert(
             animal_id=animal.id,
             alert_type="EXIT",
@@ -272,6 +461,7 @@ def gps_update():
         db.session.add(alert)
     
     if data.get("battery", 100) < 20:
+        logger.warning(f"LOW BATTERY: {animal.name} battery at {data.get('battery')}%")
         alert = Alert(
             animal_id=animal.id,
             alert_type="LOW_BATTERY",
@@ -294,21 +484,36 @@ def gps_update():
 
 @app.route("/api/alerts", methods=["GET"])
 def get_alerts():
+    # Check cache first
+    cache_key = "alerts_list"
+    cached_data = get_cached(cache_key)
+    if cached_data:
+        return jsonify(cached_data)
+    
     alerts = Alert.query.filter_by(is_read=False).order_by(Alert.created_at.desc()).all()
-    return jsonify([{
+    result = [{
         "id": a.id,
         "animal_id": a.animal_id,
         "animal_name": a.animal.name if a.animal else "Unknown",
         "alert_type": a.alert_type,
         "message": a.message,
         "created_at": a.created_at.isoformat()
-    } for a in alerts])
+    } for a in alerts]
+    
+    # Cache for 15 seconds
+    cache_response(cache_key, result, ttl=15)
+    
+    return jsonify(result)
 
 @app.route("/api/alerts/<int:id>/read", methods=["POST"])
 def mark_alert_read(id):
     alert = Alert.query.get_or_404(id)
     alert.is_read = True
     db.session.commit()
+    
+    # Clear cache when data changes
+    clear_cache()
+    
     return jsonify({"success": True})
 
 # ============ GEOFENCE ROUTES ============
@@ -377,9 +582,33 @@ def simulate_movement():
         "exited": exited_count
     })
 
+# ============ API VERSION ============
+
+@app.route("/api/version", methods=["GET"])
+def api_version():
+    """API version information"""
+    return jsonify({
+        "version": "1.0.0",
+        "api_name": "Animal Tracker API",
+        "deprecated": False,
+        "endpoints": {
+            "auth": ["/api/login", "/api/register"],
+            "animals": ["/api/animals", "/api/animals/<id>"],
+            "tracking": ["/api/gps", "/api/alerts", "/api/geofence"],
+            "bluetooth": ["/api/bluetooth/status", "/api/animals/ble-status"],
+            "system": ["/api/health", "/api/version", "/api/simulate/movement"]
+        }
+    })
+
 @app.route("/api/health", methods=["GET"])
 def health():
-    return jsonify({"status": "healthy", "timestamp": datetime.utcnow().isoformat()})
+    """Health check with system info"""
+    return jsonify({
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": "1.0.0",
+        "scheduler_running": scheduler.running
+    })
 
 # ============ BLUETOOTH STATUS ROUTES ============
 
@@ -436,6 +665,74 @@ def ble_status():
         "battery_level": a.battery_level,
         "signal_strength": a.signal_strength
     } for a in animals])
+
+# ============ BACKGROUND JOBS ============
+
+def cleanup_old_alerts():
+    """Background job to archive old read alerts (runs daily)"""
+    try:
+        from datetime import timedelta
+        cutoff_date = datetime.utcnow() - timedelta(days=30)
+        old_alerts = Alert.query.filter(
+            Alert.is_read == True,
+            Alert.created_at < cutoff_date
+        ).all()
+        
+        for alert in old_alerts:
+            db.session.delete(alert)
+        
+        db.session.commit()
+        logger.info(f"Cleaned up {len(old_alerts)} old alerts")
+    except Exception as e:
+        logger.error(f"Error cleaning up alerts: {e}")
+
+# Schedule the cleanup job to run daily at midnight
+scheduler.add_job(
+    func=cleanup_old_alerts,
+    trigger="cron",
+    hour=0,
+    minute=0,
+    id="cleanup_alerts"
+)
+
+def check_inactive_animals():
+    """Background job to check for animals not seen in 24 hours"""
+    try:
+        from datetime import timedelta
+        cutoff_time = datetime.utcnow() - timedelta(hours=24)
+        inactive_animals = Animal.query.filter(
+            Animal.last_seen < cutoff_time
+        ).all()
+        
+        for animal in inactive_animals:
+            # Create warning alert
+            existing = Alert.query.filter(
+                Alert.animal_id == animal.id,
+                Alert.alert_type == "INACTIVE",
+                Alert.created_at > cutoff_time
+            ).first()
+            
+            if not existing and animal.status == "IN":
+                alert = Alert(
+                    animal_id=animal.id,
+                    alert_type="INACTIVE",
+                    message=f"WARNING: {animal.name} has not been seen in 24 hours!"
+                )
+                db.session.add(alert)
+        
+        if inactive_animals:
+            db.session.commit()
+            logger.warning(f"Found {len(inactive_animals)} inactive animals")
+    except Exception as e:
+        logger.error(f"Error checking inactive animals: {e}")
+
+# Schedule inactive check every 6 hours
+scheduler.add_job(
+    func=check_inactive_animals,
+    trigger="interval",
+    hours=6,
+    id="check_inactive"
+)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
